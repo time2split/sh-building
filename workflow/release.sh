@@ -11,12 +11,17 @@
 #		Pre-release version to add to the semver (semver-#prerelease)
 #	-m, main (value)
 #		Name of the main branch to merge into
+#	-h, head (value)
+#		The commit/branch to release
 #	-f, force
 #		Apply the force argument -f for git commands
+#	-d, date (value)
+#		Change the date of the commits
+#		'@branch': use the current branch author date
+#		'string': value accepted by git commit --date (https://git-scm.com/docs/git-commit#_date_formats) 
 #	-v, version (value)
 #		The version to release;
 #		if not set the next version is computed with cliff
-
 
 shopt -s expand_aliases
 
@@ -34,8 +39,16 @@ while (( 0 < $# )) ; do
 	-f | force ) 
 		OPT[force]=1
 	;;
+	-d | date ) 
+		OPT[date]=$2
+		shift
+	;;
 	-p | prerelease ) 
 		OPT[prerelease]=$2
+		shift
+	;;
+	-h | head )
+		OPT[head]=$2
 		shift
 	;;
 	-m | main )
@@ -54,8 +67,11 @@ while (( 0 < $# )) ; do
   shift
 done
 
+# Head when the command was invoked
+INVOKE_HEAD="$(git rev-parse --abbrev-ref HEAD)"
+
 function end(){
-	git checkout $GIT_HEAD
+	git checkout $INVOKE_HEAD
 	exit ${1:-0}
 }
 
@@ -72,14 +88,34 @@ if [ -z ${OPT[version]} ]; then
 else
 	SEMVER="${OPT[version]}$PRERELEASE"
 fi
-GIT_HEAD=$(git rev-parse --abbrev-ref HEAD)
+
+if [ -n ${OPT[head]} ];then
+	GIT_HEAD="${OPT[head]}"
+else
+	GIT_HEAD="$INVOKE_HEAD"
+fi
+
+# Switch to the branch/commit to release
+git checkout "$GIT_HEAD" || end
+
 MAIN_BRANCH=${OPT[main]:-'main'}
 
 (( 1 == ${OPT[force]} )) && \
 GIT_FORCE='-f'
 
+optDate="${OPT[date]}"
+
+if [ -n "$optDate" ]; then
+	if [[ $optDate == '@branch' ]]; then
+		optDate="$(git show -s --format=%aI "$GIT_HEAD")"
+	fi
+	GIT_DATE="--date $optDate"
+fi
+
+export GIT_AUTHOR_DATE="$optDate"
+
 # =============================================================================
-echo "== Prepare the release of version $SEMVER =="
+echo "== Prepare the release of version $SEMVER from $GIT_HEAD to $MAIN_BRANCH (current: $INVOKE_HEAD) =="
 
 # Checkout to the working branch
 if (( 1 == ${OPT[releasebranch]:-0})); then
@@ -132,8 +168,8 @@ TAG="v$SEMVER"
 
 if (( 1 == ${OPT[merge]:-0} ));then
 	echo "- Merge $GIT_HEAD into $MAIN_BRANCH"
-	git checkout "$MAIN_BRANCH"
-	git merge --no-ff "$GIT_HEAD" -m "$RELEASE_MSG"
+	git checkout $MAIN_BRANCH
+	git merge $GIT_HEAD --no-ff  -m "$RELEASE_MSG"
 fi
 echo "- Add Tag ($TAG)"
 git tag $GIT_FORCE $TAG -m "$TAG_MSG"
